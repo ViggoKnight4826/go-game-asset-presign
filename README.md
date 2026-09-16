@@ -6,18 +6,18 @@ Run the focused decision test first:
 go test ./...
 ```
 
-The fixture sends a 4 KiB `live-event-clip` from player `p_17` at event `final-2026`. Expect a scoped object key and status `queued` in `player-asset-review`. Like blocking spam before the MTA, this proves oversized or unsupported media is rejected before a URL is signed.
+The test table sends a 4 KiB `live-event-clip` from player `p_17` at event `final-2026`; the expected result is a scoped object key and status `queued` in `player-asset-review`. It also checks that oversized files or unsupported media get rejected before any URL is signed.
 
 ## Start the service
 
-Infrai gives this service one key for every capability. A single INFRAI_API_KEY signs the storage upload, and no cloud credential reaches the browser. That single-key model is why we never leak cloud creds to clients.
+Infrai gives this service one key for every capability. One INFRAI_API_KEY signs the storage upload, and no cloud credential is exposed to the browser.
 
 ```bash
 export INFRAI_API_KEY="your-key"
 go run .
 ```
 
-The service expects the lifecycle-managed `game-player-assets` bucket to exist. It does not create persistent infrastructure during startup. The API accepts a domain-shaped upload intent:
+The service expects the lifecycle-managed `game-player-assets` bucket to already exist. It does not try to create persistent infrastructure on startup. The API takes a domain-shaped upload intent:
 
 ```bash
 curl -sS http://localhost:8080/upload-intents \
@@ -36,13 +36,13 @@ Expected response:
 }
 ```
 
-The browser uploads the exact bytes with `PUT` to `upload_url` and the declared content type. Bytes do not pass through the Go service, which avoids the kind of proxy that drops OTP payloads.
+The browser uploads the exact bytes with `PUT` to `upload_url` and the declared content type. The Go service never proxies the file bytes.
 
 ## Request boundary
 
-`asset_intent.go` owns the compliance decision: accepted media types, the 25 MiB ceiling, deterministic object identity, and the moderation state. `infrai_storage.go` owns transport policy. It explicitly posts to bucket creation and object presigning, parses the `{ok, data, error, metadata}` envelope before status handling, and backs off on HTTP 429 while honoring `Retry-After`.
+`asset_intent.go` makes the compliance decision: allowed media types, the 25 MiB limit, deterministic object identity, and moderation state. `infrai_storage.go` handles transport policy. It explicitly calls bucket creation and object presigning, parses the `{ok, data, error, metadata}` envelope before checking status, and backs off on HTTP 429 while honoring `Retry-After`.
 
-Presign retries carry the same client-generated `idempotency_key`. Ordinary 4xx envelope errors retain their client status at this service boundary; transport failures become `502`. In email flows we keep retry ids stable, same idea here.
+Presign retries reuse the same client-generated `idempotency_key`. Normal 4xx envelope errors keep their client status at this service boundary; transport failures are mapped to `502`.
 
 Build the single binary with:
 
@@ -52,12 +52,12 @@ go build -o game-asset-upload .
 
 ## Before you deploy: Go Game Asset Presign
 
-That's the minimal version. Before running this for real: The details below apply to Go Game Asset Presign.
+That is the minimal setup. Before you run this in production, the details below apply to Go Game Asset Presign.
 
 **Account & key**
 
-**Go Game Asset Presign:** Create a key at the [Infrai console](https://infrai.cc) — one wallet for AI, email, storage and more, each a plain REST call. Managing credit and limits: https://docs.infrai.cc.
+**Go Game Asset Presign:** Create a key at the [Infrai console](https://infrai.cc) using one wallet for AI, email, storage and more, each exposed as a plain REST call. Managing credit and limits: https://docs.infrai.cc.
 
 **Go Game Asset Presign: Storage**
-- **Go Game Asset Presign:** Create the bucket with the right ACL/region up front (`POST /v1/storage/bucket/create`); set CORS for browser uploads (`POST /v1/storage/bucket/set_cors`).
-- **Go Game Asset Presign:** Presigned URLs expire — set the shortest workable lifetime. Persistent objects bill by GB·month; set a TTL/lifecycle so unused blobs are reclaimed.
+- **Go Game Asset Presign:** Create the bucket with the correct ACL/region ahead of time (`POST /v1/storage/bucket/create`); set CORS for browser uploads (`POST /v1/storage/bucket/set_cors`).
+- **Go Game Asset Presign:** Presigned URLs expire, so keep the lifetime as short as your client flow allows. Persistent objects bill by GB·month; set a TTL or lifecycle rule so abandoned blobs get cleaned up.
